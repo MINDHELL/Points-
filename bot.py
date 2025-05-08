@@ -26,6 +26,8 @@ WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
 AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "7200"))
 VIDEO_LIMIT = int(os.getenv("VIDEO_LIMIT", "15"))  # Set video limit per user
 DEFAULT_QUOTA_RESET_TIME = int(os.getenv("DEFAULT_QUOTA_RESET_TIME", "86400"))  # Default quota reset time in seconds (24 hours)
+DEFAULT_POINTS_RESET_TIME = int(os.getenv("DEFAULT_POINTS_RESET_TIME", "86400"))  # Default points reset time in seconds (24 hours)
+POINTS_LIMIT = int(os.getenv("POINTS_LIMIT", "15"))  # Set points limit per user
 
 # ✅ Force Subscribe Setup
 id_pattern = re.compile(r'^.\d+$')
@@ -63,15 +65,15 @@ async def add_user(user_id):
         users_collection.insert_one({
             "id": user_id,
             "joined": datetime.datetime.utcnow(),
-            "videos_sent": 0,  # Initialize videos_sent field
-            "quota_reset_time": time.time() + DEFAULT_QUOTA_RESET_TIME  # Set the reset time for quota
+            "points_balance": 0,  # Initialize points_balance field
+            "points_reset_time": time.time() + DEFAULT_POINTS_RESET_TIME  # Set the reset time for points
         })
     else:
-        # Ensure "videos_sent" and "quota_reset_time" exist
-        if "videos_sent" not in user:
-            users_collection.update_one({"id": user_id}, {"$set": {"videos_sent": 0}})
-        if "quota_reset_time" not in user:
-            users_collection.update_one({"id": user_id}, {"$set": {"quota_reset_time": time.time() + DEFAULT_QUOTA_RESET_TIME}})
+        # Ensure "points_balance" and "points_reset_time" exist
+        if "points_balance" not in user:
+            users_collection.update_one({"id": user_id}, {"$set": {"points_balance": 0}})
+        if "points_reset_time" not in user:
+            users_collection.update_one({"id": user_id}, {"$set": {"points_reset_time": time.time() + DEFAULT_POINTS_RESET_TIME}})
 
 # ✅ **/users Command – Get Total Users**
 @bot.on_message(filters.command("users") & filters.user(OWNER_ID))
@@ -161,38 +163,37 @@ async def send_random_video(client, chat_id):
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
         return
 
-    # Check if user is the owner (unlimited quota)
+    # Check if user is the owner (unlimited points)
     if chat_id == OWNER_ID:
-        user = {"videos_sent": 0, "quota_reset_time": time.time()}
+        user = {"points_balance": 0, "points_reset_time": time.time()}
     else:
         user = users_collection.find_one({"id": chat_id})
 
-    if user["videos_sent"] >= VIDEO_LIMIT and time.time() < user["quota_reset_time"]:
-        reset_time = datetime.datetime.fromtimestamp(user["quota_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
+    if user["points_balance"] <= 0:
         await client.send_message(
             chat_id,
-            f"⚠️ You have reached your video limit of {VIDEO_LIMIT} videos. Your quota will reset at {reset_time}.",
+            f"⚠️ You have insufficient points to get a video. Please try again later.",
         )
         return
 
     video = video_cache.pop()
     try:
-        message = await client.get_messages(CHANNEL_ID, video["message_id"])
-        if message and message.video:
-            sent_msg = await client.send_video(
-                chat_id, video=message.video.file_id, caption="Thanks 😊", protect_content=True
-            )
+        message = await client.send_video(
+            chat_id=chat_id,
+            video=video["file_id"],
+            caption=video.get("caption", ""),
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("➡️ Next", callback_data="get_random_video")]]
+            ),
+            protect_content=is_protection_enabled()
+        )
+    except Exception as e:
+        logger.error(f"Error sending video: {e}")
+        await client.send_message(chat_id, "⚠️ Failed to send video. Please try again.")
+        return
 
-            if chat_id != OWNER_ID:  # Only update quota for non-owner users
-                users_collection.update_one({"id": chat_id}, {"$inc": {"videos_sent": 1}})
-
-            if AUTO_DELETE_TIME > 0:
-                await asyncio.sleep(AUTO_DELETE_TIME)
-                await sent_msg.delete()
-
-    except FloodWait as e:
-        await asyncio.sleep(e.value)
-        await send_random_video(client, chat_id)
+    # Deduct 1 point
+    users_collection.update_one({"id": chat_id}, {"$inc": {"points_balance": -1}})
 
 
 @bot.on_callback_query(filters.regex("get_random_video"))
