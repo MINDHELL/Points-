@@ -132,8 +132,21 @@ async def broadcast(client, message):
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     user_id = message.from_user.id
-    await add_user(user_id)
 
+    # Check if user exists in DB, if not insert with full points
+    user = users_collection.find_one({"id": user_id})
+    if not user:
+        settings = settings_collection.find_one({"_id": "points_settings"})
+        reset_duration = settings["points_reset_time"] if settings else DEFAULT_POINTS_RESET_TIME
+        points_reset_time = time.time() + reset_duration
+
+        users_collection.insert_one({
+            "id": user_id,
+            "points_balance": POINTS_LIMIT,
+            "points_reset_time": points_reset_time
+        })
+
+    # Proceed with normal flow
     if AUTH_CHANNEL:
         try:
             btn = []
@@ -152,7 +165,15 @@ async def start(client, message):
             pass
 
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")]])
-    await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!\n\n<b>𝖳𝗁𝗂𝗌 𝖡𝗈𝗍 𝖢𝗈𝗇𝗍𝖺𝗂𝗇𝗌 18+ 𝖢𝗈𝗇𝗍𝖾𝗇𝗍 𝖲𝗈 𝖪𝗂𝗇𝖽𝗅𝗒 𝖠𝖼𝖼𝖾𝗌𝗌 𝖨𝗍 𝖶𝗂𝗍𝗁 𝖸𝗈𝗎𝗋 𝖮𝗐𝗇 𝖱𝗂𝗌𝗄. 𝖳𝗁𝖾 𝖬𝖺𝗍𝖾𝗋𝗂𝖺𝗅 𝖬𝖺𝗒 𝖨𝗇𝖼𝗅𝗎𝖽𝖾 𝖤𝗑𝗉𝗅𝗂𝖼𝗂𝗍 𝖮𝗋 𝖦𝗋𝖺𝗉𝗁𝗂𝖼 𝖢𝗈𝗇𝗍𝖺𝖼𝗍 𝖳𝗁𝖺𝗍 𝖨𝗌 𝖴𝗇𝗌𝗎𝗂𝗍𝖺𝖻𝗅𝖾 𝖥𝗈𝗋 𝖬𝗂𝗇𝗈𝗋𝗌. 𝖲𝗈 𝖢𝗁𝗂𝗅𝖽𝗋𝖾𝗇𝗌 𝖯𝗅𝖾𝖺𝗌𝖾 𝖲𝗍𝖺𝗒 𝖠𝗐𝖺𝗒.</b>\n\n 𝖯𝗅𝖾𝖺𝗌𝖾 𝖢𝗁𝖾𝖼𝗄 Disclaimer and About 𝖡𝖾𝖿𝗈𝗋𝖾 𝖴𝗌𝗂𝗇𝗀 𝖳𝗁𝗂𝗌 𝖡𝗈𝗍..\n\n ", reply_markup=keyboard)
+    await message.reply_photo(
+        WELCOME_IMAGE,
+        caption=(
+            "🎉 Welcome to the Video Bot!\n\n"
+            "<b>𝖳𝗁𝗂𝗌 𝖡𝗈𝗍 𝖢𝗈𝗇𝗍𝖺𝗂𝗇𝗌 18+ 𝖢𝗈𝗇𝗍𝖾𝗇𝗍...</b>\n\n"
+            "𝖯𝗅𝖾𝖺𝗌𝖾 𝖢𝗁𝖾𝖼𝗄 Disclaimer and About 𝖡𝖾𝖿𝗈𝗋𝖾 𝖴𝗌𝗂𝗇𝗀 𝖳𝗁𝗂𝗌 𝖡𝗈𝗍."
+        ),
+        reply_markup=keyboard
+            )
 
 
 # ✅ **Get Random Video**
@@ -163,33 +184,31 @@ async def send_random_video(client, chat_id):
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
         return
 
-    # Owners get unlimited access
+    # Owner: Unlimited points
     if chat_id == OWNER_ID:
-        user = {"points_balance": float('inf'), "points_reset_time": time.time()}
+        user = {"points_balance": float('inf')}
     else:
         user = users_collection.find_one({"id": chat_id})
+        current_time = time.time()
+
         if not user:
             user = {
                 "id": chat_id,
                 "points_balance": POINTS_LIMIT,
-                "points_reset_time": time.time() + DEFAULT_POINTS_RESET_TIME
+                "points_reset_time": current_time + DEFAULT_POINTS_RESET_TIME
             }
             users_collection.insert_one(user)
-
-        # Reset points if time has passed
-        current_time = time.time()
-        if current_time >= user.get("points_reset_time", 0):
-            users_collection.update_one(
-                {"id": chat_id},
-                {
-                    "$set": {
-                        "points_balance": POINTS_LIMIT,
-                        "points_reset_time": current_time + DEFAULT_POINTS_RESET_TIME
-                    }
-                }
-            )
-            await client.send_message(chat_id, "✅ Your daily points have been reset.")
-            user["points_balance"] = POINTS_LIMIT
+        else:
+            # Reset points if the reset time has passed
+            if current_time >= user.get("points_reset_time", 0):
+                new_reset_time = current_time + DEFAULT_POINTS_RESET_TIME
+                users_collection.update_one(
+                    {"id": chat_id},
+                    {"$set": {"points_balance": POINTS_LIMIT, "points_reset_time": new_reset_time}}
+                )
+                user["points_balance"] = POINTS_LIMIT
+                user["points_reset_time"] = new_reset_time
+                await client.send_message(chat_id, "✅ Your daily points have been reset.")
 
         if user["points_balance"] <= 0:
             reset_time = datetime.datetime.fromtimestamp(user["points_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
@@ -199,6 +218,7 @@ async def send_random_video(client, chat_id):
             )
             return
 
+    # Send video
     video = video_cache.pop()
     try:
         message = await client.get_messages(CHANNEL_ID, video["message_id"])
@@ -229,35 +249,53 @@ async def random_video_callback(client, callback_query: CallbackQuery):
 @bot.on_message(filters.command("quota"))
 async def quota_status(client, message):
     user_id = message.from_user.id
+
     if user_id == OWNER_ID:
         await message.reply_text("✅ **You are the owner and have unlimited points!**")
         return
 
     user = users_collection.find_one({"id": user_id})
     if not user:
-        await message.reply_text("⚠️ User not found! Please start the bot first.")
+        # If user isn't in DB, add them with full points
+        settings = settings_collection.find_one({"_id": "points_settings"})
+        reset_duration = settings["points_reset_time"] if settings else DEFAULT_POINTS_RESET_TIME
+        points_reset_time = time.time() + reset_duration
+
+        users_collection.insert_one({
+            "id": user_id,
+            "points_balance": POINTS_LIMIT,
+            "points_reset_time": points_reset_time
+        })
+
+        await message.reply_text(
+            f"✅ You’ve been registered and given {POINTS_LIMIT} points to start!"
+        )
         return
 
-    current_time = time.time()
-    points_balance = user.get("points_balance", 0)
-    points_reset_time = user.get("points_reset_time", current_time + DEFAULT_POINTS_RESET_TIME)
+    # Get reset duration from DB or default
+    settings = settings_collection.find_one({"_id": "points_settings"})
+    reset_duration = settings["points_reset_time"] if settings else DEFAULT_POINTS_RESET_TIME
 
-    # If points reset time has passed, reset balance
+    current_time = time.time()
+    points_balance = user.get("points_balance", POINTS_LIMIT)
+    points_reset_time = user.get("points_reset_time", current_time + reset_duration)
+
+    # Reset points if the timer expired
     if current_time > points_reset_time:
         points_balance = POINTS_LIMIT
-        points_reset_time = current_time + DEFAULT_POINTS_RESET_TIME
+        points_reset_time = current_time + reset_duration
         users_collection.update_one(
             {"id": user_id},
             {"$set": {"points_balance": points_balance, "points_reset_time": points_reset_time}}
         )
-        await message.reply_text("✅ Your daily points have been reset.")
 
-    reset_time = datetime.datetime.fromtimestamp(points_reset_time).strftime("%Y-%m-%d %H:%M:%S")
+    # Time formatting
+    reset_time_str = datetime.datetime.fromtimestamp(points_reset_time).strftime("%Y-%m-%d %H:%M:%S")
     time_left = max(0, points_reset_time - current_time)
 
     await message.reply_text(
         f"📊 **Your Points Status:**\n"
-        f"📅 Points Reset Time: {reset_time}\n"
+        f"📅 Points Reset Time: {reset_time_str}\n"
         f"⭐ Points Left: {points_balance}/{POINTS_LIMIT}\n"
         f"⏳ Time Until Reset: {str(datetime.timedelta(seconds=int(time_left)))}"
     )
