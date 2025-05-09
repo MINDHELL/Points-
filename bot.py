@@ -189,8 +189,6 @@ async def send_random_video(client, chat_id):
         user = {"points_balance": float('inf'), "points_reset_time": time.time()}
     else:
         user = users_collection.find_one({"id": chat_id})
-
-        # Create user if not exists
         if not user:
             user = {
                 "id": chat_id,
@@ -199,15 +197,20 @@ async def send_random_video(client, chat_id):
             }
             users_collection.insert_one(user)
 
-        # Reset points if expired
+        # Enforce latest limit
+        if user["points_balance"] > POINTS_LIMIT:
+            user["points_balance"] = POINTS_LIMIT
+            users_collection.update_one({"id": chat_id}, {"$set": {"points_balance": POINTS_LIMIT}})
+
+        # Reset points if time has passed
         current_time = time.time()
-        if current_time > user.get("points_reset_time", 0):
+        if current_time >= user.get("points_reset_time", 0):
             user["points_balance"] = POINTS_LIMIT
             user["points_reset_time"] = current_time + DEFAULT_POINTS_RESET_TIME
             users_collection.update_one(
                 {"id": chat_id},
                 {"$set": {
-                    "points_balance": user["points_balance"],
+                    "points_balance": POINTS_LIMIT,
                     "points_reset_time": user["points_reset_time"]
                 }}
             )
@@ -245,56 +248,47 @@ async def send_random_video(client, chat_id):
 @bot.on_message(filters.command("quota"))
 async def quota_status(client, message):
     user_id = message.from_user.id
-
     if user_id == OWNER_ID:
         await message.reply_text("✅ **You are the owner and have unlimited points!**")
         return
 
     user = users_collection.find_one({"id": user_id})
     if not user:
-        # If user isn't in DB, add them with full points
-        settings = settings_collection.find_one({"_id": "points_settings"})
-        reset_duration = settings["points_reset_time"] if settings else DEFAULT_POINTS_RESET_TIME
-        points_reset_time = time.time() + reset_duration
-
-        users_collection.insert_one({
-            "id": user_id,
-            "points_balance": POINTS_LIMIT,
-            "points_reset_time": points_reset_time
-        })
-
-        await message.reply_text(
-            f"✅ You’ve been registered and given {POINTS_LIMIT} points to start!"
-        )
+        await message.reply_text("⚠️ User not found! Please start the bot first.")
         return
 
-    # Get reset duration from DB or default
-    settings = settings_collection.find_one({"_id": "points_settings"})
-    reset_duration = settings["points_reset_time"] if settings else DEFAULT_POINTS_RESET_TIME
-
     current_time = time.time()
-    points_balance = user.get("points_balance", POINTS_LIMIT)
-    points_reset_time = user.get("points_reset_time", current_time + reset_duration)
+    points_balance = user.get("points_balance", 0)
+    points_reset_time = user.get("points_reset_time", current_time + DEFAULT_POINTS_RESET_TIME)
 
-    # Reset points if the timer expired
+    # Enforce new limit if changed
+    if points_balance > POINTS_LIMIT:
+        points_balance = POINTS_LIMIT
+        users_collection.update_one({"id": user_id}, {"$set": {"points_balance": points_balance}})
+
+    # Reset points if expired
     if current_time > points_reset_time:
         points_balance = POINTS_LIMIT
-        points_reset_time = current_time + reset_duration
+        points_reset_time = current_time + DEFAULT_POINTS_RESET_TIME
         users_collection.update_one(
             {"id": user_id},
-            {"$set": {"points_balance": points_balance, "points_reset_time": points_reset_time}}
+            {"$set": {
+                "points_balance": points_balance,
+                "points_reset_time": points_reset_time
+            }}
         )
+        await message.reply_text("✅ Your daily points have been reset.")
 
-    # Time formatting
-    reset_time_str = datetime.datetime.fromtimestamp(points_reset_time).strftime("%Y-%m-%d %H:%M:%S")
+    reset_time = datetime.datetime.fromtimestamp(points_reset_time).strftime("%Y-%m-%d %H:%M:%S")
     time_left = max(0, points_reset_time - current_time)
 
     await message.reply_text(
         f"📊 **Your Points Status:**\n"
-        f"📅 Points Reset Time: {reset_time_str}\n"
+        f"📅 Points Reset Time: {reset_time}\n"
         f"⭐ Points Left: {points_balance}/{POINTS_LIMIT}\n"
         f"⏳ Time Until Reset: {str(datetime.timedelta(seconds=int(time_left)))}"
-    )
+        )
+
 
 # ✅ **Set Quota Duration (Only for Owner)**
 @bot.on_message(filters.command("setpoints") & filters.user(OWNER_ID))
