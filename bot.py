@@ -182,15 +182,17 @@ async def send_random_video(client, chat_id):
 
     if not video_cache:
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
+        print("Video cache is empty.")
         return
 
-    # Owner: Unlimited points
+    # Owner gets unlimited points
     if chat_id == OWNER_ID:
-        user = {"points_balance": float('inf')}
+        user = {"points_balance": float('inf'), "points_reset_time": time.time()}
     else:
         user = users_collection.find_one({"id": chat_id})
         current_time = time.time()
 
+        # Create new user if missing
         if not user:
             user = {
                 "id": chat_id,
@@ -198,17 +200,21 @@ async def send_random_video(client, chat_id):
                 "points_reset_time": current_time + DEFAULT_POINTS_RESET_TIME
             }
             users_collection.insert_one(user)
-        else:
-            # Reset points if the reset time has passed
-            if current_time >= user.get("points_reset_time", 0):
-                new_reset_time = current_time + DEFAULT_POINTS_RESET_TIME
-                users_collection.update_one(
-                    {"id": chat_id},
-                    {"$set": {"points_balance": POINTS_LIMIT, "points_reset_time": new_reset_time}}
-                )
-                user["points_balance"] = POINTS_LIMIT
-                user["points_reset_time"] = new_reset_time
-                await client.send_message(chat_id, "✅ Your daily points have been reset.")
+            print(f"New user created: {chat_id}")
+
+        # Reset points if needed
+        if current_time >= user.get("points_reset_time", 0):
+            users_collection.update_one(
+                {"id": chat_id},
+                {
+                    "$set": {
+                        "points_balance": POINTS_LIMIT,
+                        "points_reset_time": current_time + DEFAULT_POINTS_RESET_TIME
+                    }
+                }
+            )
+            await client.send_message(chat_id, "✅ Your daily points have been reset.")
+            user["points_balance"] = POINTS_LIMIT
 
         if user["points_balance"] <= 0:
             reset_time = datetime.datetime.fromtimestamp(user["points_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
@@ -218,11 +224,17 @@ async def send_random_video(client, chat_id):
             )
             return
 
-    # Send video
-    video = video_cache.pop()
-    try:
-        message = await client.get_messages(CHANNEL_ID, video["message_id"])
-        if message and message.video:
+    print(f"Sending video to {chat_id} — Remaining points: {user['points_balance']}")
+
+    # Try popping a video from cache
+    while video_cache:
+        video = video_cache.pop()
+        try:
+            message = await client.get_messages(CHANNEL_ID, video["message_id"])
+            if not message or not message.video:
+                print("Invalid or missing video. Trying next...")
+                continue
+
             sent_msg = await client.send_video(
                 chat_id, video=message.video.file_id, caption="Thanks 😊", protect_content=True
             )
@@ -233,15 +245,22 @@ async def send_random_video(client, chat_id):
             if AUTO_DELETE_TIME > 0:
                 await asyncio.sleep(AUTO_DELETE_TIME)
                 await sent_msg.delete()
+            return  # Success
 
-    except FloodWait as e:
-        await asyncio.sleep(e.value)
-        await send_random_video(client, chat_id)
+        except FloodWait as e:
+            print(f"FloodWait: Sleeping for {e.value} seconds")
+            await asyncio.sleep(e.value)
+            continue  # Retry the same loop
+        except Exception as e:
+            print(f"Error sending video: {e}")
+            continue  # Try next video
+
+    await client.send_message(chat_id, "⚠ Failed to send a video. Please try again later.")
 
 @bot.on_callback_query(filters.regex("get_random_video"))
 async def random_video_callback(client, callback_query: CallbackQuery):
     await callback_query.answer()
-    asyncio.create_task(send_random_video(client, callback_query.message.chat.id))
+    await send_random_video(client, callback_query.message.chat.id))
 
 
 # ✅ **Quota Status**
