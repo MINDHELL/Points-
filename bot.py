@@ -184,12 +184,13 @@ async def send_random_video(client, chat_id):
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
         return
 
+    current_time = time.time()
+
     # Owner has unlimited points
     if chat_id == OWNER_ID:
-        user = {"points_balance": float('inf'), "points_reset_time": time.time()}
+        user = {"points_balance": float('inf'), "points_reset_time": current_time}
     else:
         user = users_collection.find_one({"id": chat_id})
-        current_time = time.time()
 
         if not user:
             user = {
@@ -198,67 +199,58 @@ async def send_random_video(client, chat_id):
                 "points_reset_time": current_time + DEFAULT_POINTS_RESET_TIME
             }
             users_collection.insert_one(user)
-        else:
-            # Enforce latest points limit if user has more than allowed
-            if user.get("points_balance", 0) > POINTS_LIMIT:
-                user["points_balance"] = POINTS_LIMIT
-                users_collection.update_one({"id": chat_id}, {"$set": {"points_balance": POINTS_LIMIT}})
 
-            # Reset points if expired
-            if current_time >= user.get("points_reset_time", 0):
-                user["points_balance"] = POINTS_LIMIT
-                user["points_reset_time"] = current_time + DEFAULT_POINTS_RESET_TIME
-                users_collection.update_one(
-                    {"id": chat_id},
-                    {"$set": {
-                        "points_balance": POINTS_LIMIT,
-                        "points_reset_time": user["points_reset_time"]
-                    }}
-                )
-                await client.send_message(chat_id, "✅ Your daily points have been reset.")
+        # Reset points if time passed
+        if current_time >= user.get("points_reset_time", 0):
+            user["points_balance"] = POINTS_LIMIT
+            user["points_reset_time"] = current_time + DEFAULT_POINTS_RESET_TIME
+            users_collection.update_one(
+                {"id": chat_id},
+                {"$set": {
+                    "points_balance": POINTS_LIMIT,
+                    "points_reset_time": user["points_reset_time"]
+                }}
+            )
+            await client.send_message(chat_id, "✅ Your daily points have been reset.")
 
-        # If no points left
+        # Enforce limit adjustment if config was changed
+        if user["points_balance"] > POINTS_LIMIT:
+            user["points_balance"] = POINTS_LIMIT
+            users_collection.update_one(
+                {"id": chat_id},
+                {"$set": {"points_balance": POINTS_LIMIT}}
+            )
+
         if user["points_balance"] <= 0:
             reset_time = datetime.datetime.fromtimestamp(user["points_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
             await client.send_message(
                 chat_id,
-                f"⚠️ You have used all your daily points. You will get new points at {reset_time}."
+                f"⚠️ You have used all your daily points. You will get new points at {reset_time}.",
             )
             return
 
-    # Pop and try sending video
+    # Send video
     try:
         video = video_cache.pop()
-    except IndexError:
-        await client.send_message(chat_id, "⚠ Video cache is empty. Try again later.")
-        return
-
-    try:
         message = await client.get_messages(CHANNEL_ID, video["message_id"])
-        if not message or not message.video:
-            await client.send_message(chat_id, "⚠ Couldn't fetch the video. It may have been deleted.")
-            return
+        if message and message.video:
+            sent_msg = await client.send_video(
+                chat_id,
+                video=message.video.file_id,
+                caption="Thanks 😊",
+                protect_content=True
+            )
 
-        sent_msg = await client.send_video(
-            chat_id,
-            video=message.video.file_id,
-            caption="Thanks 😊",
-            protect_content=True
-        )
+            if chat_id != OWNER_ID:
+                users_collection.update_one({"id": chat_id}, {"$inc": {"points_balance": -1}})
 
-        if chat_id != OWNER_ID:
-            users_collection.update_one({"id": chat_id}, {"$inc": {"points_balance": -1}})
-
-        if AUTO_DELETE_TIME > 0:
-            await asyncio.sleep(AUTO_DELETE_TIME)
-            await sent_msg.delete()
+            if AUTO_DELETE_TIME > 0:
+                await asyncio.sleep(AUTO_DELETE_TIME)
+                await sent_msg.delete()
 
     except FloodWait as e:
         await asyncio.sleep(e.value)
         await send_random_video(client, chat_id)
-    except Exception as e:
-        await client.send_message(chat_id, f"❌ Failed to send video: {e}")
-
 
 # ✅️**Quota Status**
 # ✅ **Points Status**
