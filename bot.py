@@ -264,6 +264,15 @@ async def send_random_video(client, chat_id):
     except Exception as e:
         print(f"[ERROR] Unexpected error: {e}")
         await client.send_message(chat_id, f"❌ Error sending video: {e}")
+
+
+@bot.on_callback_query(filters.regex("get_random_video"))
+async def random_video_callback(client, callback_query: CallbackQuery):
+    await callback_query.answer()
+    await send_random_video(client, callback_query.message.chat.id)
+
+
+        
 # ✅️**Quota Status**
 # ✅ **Points Status**
 @bot.on_message(filters.command("quota"))
