@@ -324,9 +324,16 @@ async def quota_status(client, message):
 @bot.on_message(filters.command("setpoints") & filters.user(OWNER_ID))
 async def set_points_duration(client, message):
     try:
-        _, hours = message.text.split()
-        hours = int(hours)
-        new_reset_time = hours * 60 * 60  # Convert hours to seconds
+        _, time_value, unit = message.text.split()
+        time_value = int(time_value)
+
+        if unit.lower() in ["minute", "minutes", "min", "mins"]:
+            new_reset_time = time_value * 60  # Convert minutes to seconds
+        elif unit.lower() in ["hour", "hours", "hr", "hrs"]:
+            new_reset_time = time_value * 3600  # Convert hours to seconds
+        else:
+            await message.reply_text("⚠️ Invalid unit. Please use 'minutes' or 'hours'.")
+            return
 
         settings_collection.update_one(
             {"_id": "points_settings"}, {"$set": {"points_reset_time": new_reset_time}}, upsert=True
@@ -337,18 +344,9 @@ async def set_points_duration(client, message):
             {}, {"$set": {"points_reset_time": current_time + new_reset_time}}
         )
 
-        await message.reply_text(f"✅ **Points reset duration updated to {hours} hours!**")
+        await message.reply_text(f"✅ **Points reset duration updated to {time_value} {unit}!**")
     except (ValueError, IndexError):
-        await message.reply_text("⚠ Usage: `/setpoints <hours>` (e.g., `/setpoints 6` for 6 hours)")
-
-@bot.on_message(filters.command("getpoints") & filters.user(OWNER_ID))
-async def get_points_setting(client, message):
-    settings = settings_collection.find_one({"_id": "points_settings"})
-    if settings and "points_reset_time" in settings:
-        duration = str(datetime.timedelta(seconds=settings["points_reset_time"]))
-        await message.reply_text(f"⏱ **Current points reset duration:** `{duration}`")
-    else:
-        await message.reply_text("⚠ No custom points reset duration set.")
+        await message.reply_text("⚠️ Usage: `/setpoints <value> <unit>` (e.g., `/setpoints 30 minutes` or `/setpoints 2 hours`)")
         
 
 # ✅ **Index Videos**
