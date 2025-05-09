@@ -269,7 +269,7 @@ async def send_random_video(client, chat_id):
 @bot.on_callback_query(filters.regex("get_random_video"))
 async def random_video_callback(client, callback_query: CallbackQuery):
     await callback_query.answer()
-    await send_random_video(client, callback_query.message.chat.id)
+    asyncio.create_task(send_random_video(client, callback_query.message.chat.id))
 
 
         
