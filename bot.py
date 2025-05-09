@@ -27,7 +27,7 @@ AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "7200"))
 VIDEO_LIMIT = int(os.getenv("VIDEO_LIMIT", "15"))  # Set video limit per user
 DEFAULT_QUOTA_RESET_TIME = int(os.getenv("DEFAULT_QUOTA_RESET_TIME", "86400"))  # Default quota reset time in seconds (24 hours)
 DEFAULT_POINTS_RESET_TIME = int(os.getenv("DEFAULT_POINTS_RESET_TIME", "86400"))  # Default points reset time in seconds (24 hours)
-POINTS_LIMIT = int(os.getenv("POINTS_LIMIT", "15"))  # Set points limit per user
+POINTS_LIMIT = int(os.getenv("POINTS_LIMIT", "8"))  # Set points limit per user
 
 # ✅ Force Subscribe Setup
 id_pattern = re.compile(r'^.\d+$')
