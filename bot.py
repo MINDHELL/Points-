@@ -179,28 +179,36 @@ async def start(client, message):
 # ✅ **Get Random Video**
 async def send_random_video(client, chat_id):
     await refresh_video_cache()
+    print(f"[DEBUG] Video cache length: {len(video_cache)}")
 
     if not video_cache:
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
         return
 
-    current_time = time.time()
-
-    # Owner has unlimited points
+    # Owner gets unlimited points
     if chat_id == OWNER_ID:
-        user = {"points_balance": float('inf'), "points_reset_time": current_time}
+        user = {"points_balance": float('inf'), "points_reset_time": time.time()}
     else:
         user = users_collection.find_one({"id": chat_id})
 
+        # Create new user if not found
         if not user:
             user = {
                 "id": chat_id,
                 "points_balance": POINTS_LIMIT,
-                "points_reset_time": current_time + DEFAULT_POINTS_RESET_TIME
+                "points_reset_time": time.time() + DEFAULT_POINTS_RESET_TIME
             }
             users_collection.insert_one(user)
+            print(f"[DEBUG] New user created: {user}")
 
-        # Reset points if time passed
+        # Enforce latest limit (in case POINTS_LIMIT was changed)
+        if user.get("points_balance", 0) > POINTS_LIMIT:
+            user["points_balance"] = POINTS_LIMIT
+            users_collection.update_one({"id": chat_id}, {"$set": {"points_balance": POINTS_LIMIT}})
+            print("[DEBUG] Points balance adjusted to match POINTS_LIMIT.")
+
+        # Reset if expired
+        current_time = time.time()
         if current_time >= user.get("points_reset_time", 0):
             user["points_balance"] = POINTS_LIMIT
             user["points_reset_time"] = current_time + DEFAULT_POINTS_RESET_TIME
@@ -212,15 +220,9 @@ async def send_random_video(client, chat_id):
                 }}
             )
             await client.send_message(chat_id, "✅ Your daily points have been reset.")
+            print("[DEBUG] Points reset.")
 
-        # Enforce limit adjustment if config was changed
-        if user["points_balance"] > POINTS_LIMIT:
-            user["points_balance"] = POINTS_LIMIT
-            users_collection.update_one(
-                {"id": chat_id},
-                {"$set": {"points_balance": POINTS_LIMIT}}
-            )
-
+        # If no points left
         if user["points_balance"] <= 0:
             reset_time = datetime.datetime.fromtimestamp(user["points_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
             await client.send_message(
@@ -229,29 +231,39 @@ async def send_random_video(client, chat_id):
             )
             return
 
-    # Send video
+    # Pop a video from the cache
+    video = video_cache.pop()
+    print(f"[DEBUG] Sending video from message ID: {video['message_id']}")
+
     try:
-        video = video_cache.pop()
         message = await client.get_messages(CHANNEL_ID, video["message_id"])
-        if message and message.video:
-            sent_msg = await client.send_video(
-                chat_id,
-                video=message.video.file_id,
-                caption="Thanks 😊",
-                protect_content=True
-            )
+        print(f"[DEBUG] Fetched message: {message}")
 
-            if chat_id != OWNER_ID:
-                users_collection.update_one({"id": chat_id}, {"$inc": {"points_balance": -1}})
+        if not message or not message.video:
+            await client.send_message(chat_id, "⚠ Video not found in channel message.")
+            return
 
-            if AUTO_DELETE_TIME > 0:
-                await asyncio.sleep(AUTO_DELETE_TIME)
-                await sent_msg.delete()
+        sent_msg = await client.send_video(
+            chat_id, video=message.video.file_id, caption="Thanks 😊", protect_content=True
+        )
+        print("[DEBUG] Video sent successfully.")
+
+        if chat_id != OWNER_ID:
+            users_collection.update_one({"id": chat_id}, {"$inc": {"points_balance": -1}})
+            print(f"[DEBUG] Deducted 1 point from user {chat_id}.")
+
+        if AUTO_DELETE_TIME > 0:
+            await asyncio.sleep(AUTO_DELETE_TIME)
+            await sent_msg.delete()
 
     except FloodWait as e:
+        print(f"[DEBUG] FloodWait: Sleeping for {e.value} seconds")
         await asyncio.sleep(e.value)
         await send_random_video(client, chat_id)
 
+    except Exception as e:
+        print(f"[ERROR] Unexpected error: {e}")
+        await client.send_message(chat_id, f"❌ Error sending video: {e}")
 # ✅️**Quota Status**
 # ✅ **Points Status**
 @bot.on_message(filters.command("quota"))
