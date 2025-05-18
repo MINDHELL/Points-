@@ -172,12 +172,33 @@ async def points_status(client, message):
 @bot.on_message(filters.command("setpoints") & filters.user(OWNER_ID))
 async def set_point_reset_time(client, message):
     try:
-        _, hours = message.text.split()
-        seconds = int(hours) * 3600
-        settings_collection.update_one({"_id": "points_settings"}, {"$set": {"reset_time": seconds}}, upsert=True)
-        await message.reply_text(f"✅ Points reset interval set to {hours} hours.")
-    except:
-        await message.reply_text("⚠ Usage: `/setpoints <hours>`")
+        input_text = message.text.split(maxsplit=1)[1].lower()
+
+        # Parse time (e.g., 1h30m, 45m, 2h)
+        match = re.findall(r"(\d+)([hm])", input_text)
+        if not match:
+            raise ValueError("Invalid time format")
+
+        total_seconds = 0
+        for value, unit in match:
+            if unit == "h":
+                total_seconds += int(value) * 3600
+            elif unit == "m":
+                total_seconds += int(value) * 60
+
+        if total_seconds <= 0:
+            raise ValueError("Reset interval must be greater than 0")
+
+        # Save in settings and update all users
+        settings_collection.update_one({"_id": "points_settings"}, {"$set": {"reset_time": total_seconds}}, upsert=True)
+
+        new_reset_time = time.time() + total_seconds
+        users_collection.update_many({}, {"$set": {"points_reset_time": new_reset_time}})
+
+        formatted = str(datetime.timedelta(seconds=total_seconds))
+        await message.reply_text(f"✅ Points reset interval set to `{formatted}` and applied to all users.")
+    except Exception as e:
+        await message.reply_text("⚠ Usage: `/setpoints 1h30m`, `/setpoints 45m`, etc.\n\nError: " + str(e))
 
 @bot.on_message(filters.command("files") & filters.user(OWNER_ID))
 async def total_files(client, message):
