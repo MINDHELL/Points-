@@ -23,21 +23,51 @@ OWNER_ID = int(os.getenv("OWNER_ID", "6860316927"))
 WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
 AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "7200"))
 DEFAULT_POINTS = int(os.getenv("DEFAULT_POINTS", "5"))
-DEFAULT_RESET_TIME = int(os.getenv("DEFAULT_RESET_TIME", "86400"))
+DEFAULT_RESET_TIME = int(os.getenv("DEFAULT_RESET_TIME", "18000"))
 
-id_pattern = re.compile(r'^.\d+$')
-AUTH_CHANNEL = [int(ch) if id_pattern.search(ch) else ch for ch in os.getenv("AUTH_CHANNEL", "-1002490575006").split()]
+id_pattern = re.compile(r'^-?\d+$')
+AUTH_CHANNEL = [int(ch) if id_pattern.match(ch) else ch for ch in os.getenv("AUTH_CHANNEL", "-1002490575006").split()]
 
 bot = Client("video_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 mongo = MongoClient(MONGO_URL)
-db = mongo["VideoBot"]
-collection = db["videos"]
-users_collection = db["users"]
-settings_collection = db["settings"]
+db = mongo["VideoBot1"]
+collection = db["videos1"]
+users_collection = db["users1"]
+settings_collection = db["settings1"]
 
 video_cache = []
 last_cache_time = 0
 CACHE_EXPIRY = 300
+
+PREMIUM_TIERS = {
+    "silver": 10,
+    "gold": 20,
+    "diamond": 30,
+    "platinum": 40
+}
+
+REFERRAL_TIERS = {
+    5: ("silver", 10),
+    10: ("gold", 20),
+    20: ("diamond", 50)
+}
+
+def get_user(user_id):
+    user = users_collection.find_one({"id": user_id})
+    if not user:
+        settings = settings_collection.find_one({"_id": "points_settings"}) or {}
+        reset_time = settings.get("reset_time", DEFAULT_RESET_TIME)
+        user = {
+            "id": user_id,
+            "joined": datetime.datetime.utcnow(),
+            "points": DEFAULT_POINTS,
+            "points_reset_time": time.time() + reset_time,
+            "referral_points": 0,
+            "referrals": [],
+            "premium": None
+        }
+        users_collection.insert_one(user)
+    return user
 
 async def refresh_video_cache():
     global video_cache, last_cache_time
@@ -46,21 +76,24 @@ async def refresh_video_cache():
         last_cache_time = time.time()
 
 async def add_user(user_id):
-    user = users_collection.find_one({"id": user_id})
-    if not user:
-        settings = settings_collection.find_one({"_id": "points_settings"}) or {}
-        reset_time = settings.get("reset_time", DEFAULT_RESET_TIME)
-        users_collection.insert_one({
-            "id": user_id,
-            "joined": datetime.datetime.utcnow(),
-            "points": DEFAULT_POINTS,
-            "points_reset_time": time.time() + reset_time
-        })
+    return get_user(user_id)
+
 
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     user_id = message.from_user.id
+    args = message.text.split()
     await add_user(user_id)
+
+    if len(args) > 1 and args[1].startswith("ref-"):
+        try:
+            ref_id = int(args[1].split("-")[1])
+            if ref_id != user_id:
+                user = get_user(user_id)
+                if ref_id not in user.get("referrals", []):
+                    users_collection.update_one({"id": ref_id}, {"$addToSet": {"referrals": user_id}})
+        except Exception:
+            pass
 
     if AUTH_CHANNEL:
         try:
@@ -76,15 +109,45 @@ async def start(client, message):
                 reply_markup=InlineKeyboardMarkup(btn),
             )
             return
-        except Exception:
-            pass
 
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")]])
-    await message.reply_photo(
-        WELCOME_IMAGE,
-        caption="🎉 Welcome to the Video Bot!\n\n<b>𝖳𝗁𝗂𝗌 𝖡𝗈𝗍 𝖢𝗈𝗇𝗍𝖺𝗂𝗇𝗌 18+ 𝖢𝗈𝗇𝗍𝖾𝗇𝗍...</b>",
-        reply_markup=keyboard
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")]]
     )
+    await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!\n\n<b>𝖳𝗁𝗂𝗌 𝖡𝗈𝗍 𝖢𝗈𝗇𝗍𝖺𝗂𝗇𝗌 18+ 𝖢𝗈𝗇𝗍𝖾𝗇𝗍...</b>", reply_markup=keyboard)
+
+async def calculate_total_points(user):
+    total = user.get("points", 0)
+    referral_points = user.get("referral_points", 0)
+    premium = user.get("premium")
+    premium_points = 0
+    if premium and time.time() < premium.get("expiry", 0):
+        tier = premium.get("tier")
+        premium_points = PREMIUM_TIERS.get(tier, 0)
+        total += premium_points
+    total += referral_points
+    return total, referral_points, premium_points
+
+async def reset_points_if_needed(user):
+    settings = settings_collection.find_one({"_id": "points_settings"}) or {}
+    reset_interval = settings.get("reset_time", DEFAULT_RESET_TIME)
+    if time.time() > user.get("points_reset_time", 0):
+        premium = user.get("premium")
+        if premium and time.time() < premium.get("expiry", 0):
+            tier = premium.get("tier")
+            premium_points = PREMIUM_TIERS.get(tier, 0)
+        else:
+            premium_points = 0
+        referral_points = 0
+        for r, (name, pts) in REFERRAL_TIERS.items():
+            if len(user.get("referrals", [])) >= r:
+                referral_points = pts
+        users_collection.update_one({"id": user["id"]}, {"$set": {
+            "points": DEFAULT_POINTS,
+            "points_reset_time": time.time() + reset_interval,
+            "referral_points": referral_points
+        }})
+        user = get_user(user["id"])
+    return user
 
 async def send_random_video(client, chat_id):
     await refresh_video_cache()
@@ -93,37 +156,29 @@ async def send_random_video(client, chat_id):
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
         return
 
-    user = users_collection.find_one({"id": chat_id})
-    if not user:
-        await add_user(chat_id)
-        user = users_collection.find_one({"id": chat_id})
-
-    settings = settings_collection.find_one({"_id": "points_settings"}) or {}
-    reset_interval = settings.get("reset_time", DEFAULT_RESET_TIME)
-
-    if time.time() > user.get("points_reset_time", 0):
-        users_collection.update_one(
-            {"id": chat_id},
-            {"$set": {"points": DEFAULT_POINTS, "points_reset_time": time.time() + reset_interval}}
-        )
-        user = users_collection.find_one({"id": chat_id})
-
-    if user.get("points", 0) <= 0:
-        reset_time = datetime.datetime.fromtimestamp(user.get("points_reset_time", 0)).strftime("%Y-%m-%d %H:%M:%S")
-        await client.send_message(chat_id, f"⚠️ You have no points left. New points will be added at {reset_time}.")
-        return
+    if chat_id == OWNER_ID:
+        consume = False
+    else:
+        user = get_user(chat_id)
+        user = await reset_points_if_needed(user)
+        points = user.get("points", 0)
+        if points > 0:
+            users_collection.update_one({"id": chat_id}, {"$inc": {"points": -1}})
+        elif user.get("referral_points", 0) > 0:
+            users_collection.update_one({"id": chat_id}, {"$inc": {"referral_points": -1}})
+        else:
+            reset_time = datetime.datetime.fromtimestamp(user.get("points_reset_time", 0)).strftime("%Y-%m-%d %H:%M:%S")
+            await client.send_message(chat_id, f"⚠️ You have no points left. New points will be added at {reset_time}.")
+            return
 
     video = video_cache.pop()
     try:
         message = await client.get_messages(CHANNEL_ID, video["message_id"])
         if message and message.video:
             sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊", protect_content=True)
-            users_collection.update_one({"id": chat_id}, {"$inc": {"points": -1}})
-
             if AUTO_DELETE_TIME > 0:
                 await asyncio.sleep(AUTO_DELETE_TIME)
                 await sent_msg.delete()
-
     except FloodWait as e:
         await asyncio.sleep(e.value)
         await send_random_video(client, chat_id)
@@ -135,33 +190,66 @@ async def random_video_callback(client, callback_query: CallbackQuery):
 
 @bot.on_message(filters.command("points"))
 async def check_points(client, message):
-    user_id = message.from_user.id
-    user = users_collection.find_one({"id": user_id})
-
-    if not user:
-        await message.reply_text("⚠ Please start the bot first.")
-        return
-
-    settings = settings_collection.find_one({"_id": "points_settings"}) or {}
-    reset_interval = settings.get("reset_time", DEFAULT_RESET_TIME)
-    current_time = time.time()
-
-    if current_time > user.get("points_reset_time", 0):
-        users_collection.update_one(
-            {"id": user_id},
-            {"$set": {"points": DEFAULT_POINTS, "points_reset_time": current_time + reset_interval}}
-        )
-        user = users_collection.find_one({"id": user_id})
-
-    points = user.get("points", 0)
+    user = get_user(message.from_user.id)
+    user = await reset_points_if_needed(user)
+    points, ref, prem = await calculate_total_points(user)
     reset_time = datetime.datetime.fromtimestamp(user["points_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
-    time_left = int(user["points_reset_time"] - current_time)
-
+    time_left = int(user["points_reset_time"] - time.time())
     await message.reply_text(
-        f"⭐ **Points Left:** `{points}`\n"
-        f"⏳ **Resets In:** `{str(datetime.timedelta(seconds=time_left))}`\n"
-        f"🕒 **Next Reset At:** `{reset_time}`"
+        f"⭐ Points: {user.get('points', 0)}\n"
+        f"🤝 Referral Points: {ref}\n"
+        f"💎 Premium Bonus: {prem}\n"
+        f"⏳ Next Reset In: {str(datetime.timedelta(seconds=time_left))}\n"
+        f"🕒 Reset At: {reset_time}"
     )
+
+@bot.on_message(filters.command("addpremium") & filters.user(OWNER_ID))
+async def add_premium(client, message):
+    try:
+        _, uid, level, days = message.text.split()
+        uid = int(uid)
+        level = level.lower()
+        days = int(days)
+        if level not in PREMIUM_TIERS:
+            await message.reply_text(f"❌ Invalid premium tier. Choose from: {', '.join(PREMIUM_TIERS.keys())}")
+            return
+        expiry = time.time() + (days * 86400)
+        users_collection.update_one({"id": uid}, {"$set": {"premium": {"tier": level, "expiry": expiry}}})
+        await message.reply_text("✅ Premium added.")
+    except Exception:
+        await message.reply_text("Usage: /addpremium <user_id> <tier> <days>")
+
+@bot.on_message(filters.command("removepremium") & filters.user(OWNER_ID))
+async def remove_premium(client, message):
+    try:
+        _, uid = message.text.split()
+        uid = int(uid)
+        users_collection.update_one({"id": uid}, {"$unset": {"premium": ""}})
+        await message.reply_text("✅ Premium removed.")
+    except Exception:
+        await message.reply_text("Usage: /removepremium <user_id>")
+
+@bot.on_message(filters.command("myplans"))
+async def my_plans(client, message):
+    user = get_user(message.from_user.id)
+    premium = user.get("premium")
+    text = "Your Plans:\n"
+    if premium:
+        expiry = datetime.datetime.fromtimestamp(premium["expiry"]).strftime("%Y-%m-%d")
+        text += f"💎 Premium: {premium['tier'].capitalize()} (until {expiry})\n"
+    else:
+        text += "💎 Premium: None\n"
+    ref_count = len(user.get("referrals", []))
+    text += f"🤝 Referrals: {ref_count}\n"
+    await message.reply_text(text)
+
+
+@bot.on_message(filters.command("referral"))
+async def referral_link(client, message):
+    user_id = message.from_user.id
+    link = f"https://t.me/{client.me.username}?start=ref-{user_id}"
+    await message.reply_text(f"🔗 Your referral link:\n{link}")
+
 
 @bot.on_message(filters.command("setpoints") & filters.user(OWNER_ID))
 async def set_points_reset(client, message):
@@ -176,12 +264,13 @@ async def set_points_reset(client, message):
         else:
             reset_time = int(duration)
 
-        settings_collection.update_one({"_id": "points_settings"}, {"$set": {"reset_time": reset_time}}, upsert=True)
-        users_collection.update_many({}, {"$set": {"points_reset_time": time.time() + reset_time}})
-
-        await message.reply_text(f"✅ **Points reset interval updated to {duration}!**")
-    except Exception as e:
+        settings_collection.update_one(
+            {"_id": "points_settings"}, {"$set": {"reset_time": reset_time}}, upsert=True
+        )
+        await message.reply_text(f"✅ Points reset interval updated to {duration}!")
+    except:
         await message.reply_text("⚠ Usage: /setpoints <duration> (e.g., /setpoints 6h or /setpoints 30m)")
+
 
 @bot.on_message(filters.command("getpoints") & filters.user(OWNER_ID))
 async def get_points_reset(client, message):
@@ -190,11 +279,14 @@ async def get_points_reset(client, message):
     duration_str = str(datetime.timedelta(seconds=reset_time))
     await message.reply_text(f"⏱ Current points reset duration: {duration_str}")
 
+
 @bot.on_message(filters.command("files") & filters.user(OWNER_ID))
 async def total_files(client, message):
     total_files = collection.count_documents({})
     await message.reply_text(f"📂 Total Indexed Files: {total_files}")
 
+
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
     bot.run()
+            
