@@ -292,6 +292,70 @@ async def get_points_reset(client, message):
     duration_str = str(datetime.timedelta(seconds=reset_time))
     await message.reply_text(f"⏱ Current points reset duration: {duration_str}")
 
+@bot.on_message(filters.command("myreferrals"))
+async def my_referrals(client, message):
+    user = get_user(message.from_user.id)
+    referrals = user.get("referrals", [])
+    count = len(referrals)
+    tier_name = "None"
+
+    for threshold, (name, _) in sorted(REFERRAL_TIERS.items(), reverse=True):
+        if count >= threshold:
+            tier_name = name.capitalize()
+            break
+
+    await message.reply_text(
+        f"🤝 You have referred **{count}** user(s).\n"
+        f"🏅 Your current referral tier: **{tier_name}**\n\n"
+        "🔗 Share your referral link using /referral"
+    )
+
+
+@bot.on_message(filters.command("premiumusers") & filters.user(OWNER_ID))
+async def list_premium_users(client, message):
+    users = users_collection.find({"premium": {"$ne": None}})
+    lines = []
+
+    for user in users:
+        uid = user["id"]
+        tier = user["premium"].get("tier", "Unknown").capitalize()
+        expiry_ts = user["premium"].get("expiry", 0)
+        expiry = datetime.datetime.fromtimestamp(expiry_ts).strftime("%Y-%m-%d %H:%M:%S")
+        lines.append(f"User ID: {uid} | Tier: {tier} | Expiry: {expiry}")
+
+    if not lines:
+        await message.reply_text("❌ No premium users found.")
+        return
+
+    file_path = "/tmp/premium_users.txt"
+    with open(file_path, "w") as f:
+        f.write("\n".join(lines))
+
+    await message.reply_document(file_path, caption="📄 Premium Users List")
+
+
+@bot.on_message(filters.command("plans"))
+async def show_plans(client, message):
+    text = (
+        "💎 **Premium Plans**\n\n"
+        "• **Silver** – 10 daily points\n"
+        "   └ Rs. 29 / $0.35\n\n"
+        "• **Gold** – 20 daily points\n"
+        "   └ Rs. 59 / $0.70\n\n"
+        "• **Diamond** – 30 daily points\n"
+        "   └ Rs. 89 / $1.05\n\n"
+        "• **Platinum** – 40 daily points\n"
+        "   └ Rs. 129 / $1.50\n\n"
+        "⏳ Plans renew daily until expiry.\n"
+        "🧾 Custom duration available.\n\n"
+        "📞 Contact us to buy a plan!"
+    )
+
+    buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛒 Buy Plan", url="https://t.me/YourUsername")]
+    ])
+    await message.reply_text(text, reply_markup=buttons)
+
 
 @bot.on_message(filters.command("files") & filters.user(OWNER_ID))
 async def total_files(client, message):
