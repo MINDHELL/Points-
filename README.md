@@ -1,3 +1,3 @@
 # Normal-
 
-#this is base code for points working fine with only /setpoints 
+BOT.PY1 HAS BEST CODE WITH ALL FEATURES BAS SETPOINTS  SABHI USERS KE RESET TIME COMPLETE HONE KE BADD SET HOTA HA..
