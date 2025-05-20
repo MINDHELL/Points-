@@ -474,7 +474,7 @@ async def premium_expiry_warning():
 
         await asyncio.sleep(300)  # Check every 5 minutes
       
--# --- Referral Expiry Settings ---
+# --- Referral Expiry Settings ---
 
 REFERRAL_EXPIRY_ENABLED = True  # Can be toggled via command
 REFERRAL_EXPIRY_DAYS = 30
