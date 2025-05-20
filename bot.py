@@ -290,7 +290,7 @@ async def my_plans(client, message):
 @bot.on_message(filters.command("referral"))
 async def referral_handler(client, message):
     user_id = message.from_user.id
-    referral_link = f"https://t.me/{RundumBot}?start=ref-{user_id}"
+    referral_link = f"https://t.me/RundumBot?start=ref-{user_id}"
 
     text = (
         "👥 <b>Invite & Earn Rewards!</b>\n\n"
