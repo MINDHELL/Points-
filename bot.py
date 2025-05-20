@@ -10,6 +10,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQ
 from pymongo import MongoClient
 from pyrogram.errors import UserNotParticipant, FloodWait
 from health_check import start_health_check
+from pyrogram.enums import ParseMode
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -283,7 +284,7 @@ async def my_plans(client, message):
             "🎯 Invite friends to unlock bonus points!"
         )
 
-    await message.reply_text(text, parse_mode="HTML")
+    await message.reply_text(text, parse_mode=parseMode.HTML)
 
 
 @bot.on_message(filters.command("referral"))
