@@ -303,7 +303,7 @@ async def referral_handler(client, message):
         "⏳ <i>More referrals = more rewards!</i>"
     )
 
-    await message.reply_text(text, parse_mode="html")
+    await message.reply_text(text, parse_mode=ParseMode.HTML)
 
 @bot.on_message(filters.command("setpoints") & filters.user(OWNER_ID))
 async def set_points_reset(client, message):
@@ -397,7 +397,7 @@ async def show_plans(client, message):
     )
 
     buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 Buy Plan", url="https://t.me/YourUsername")]
+        [InlineKeyboardButton("🛒 Buy Plan", url="https://t.me/cosmos6t")]
     ])
     await message.reply_text(text, reply_markup=buttons)
 
