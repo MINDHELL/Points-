@@ -284,7 +284,7 @@ async def my_plans(client, message):
             "🎯 Invite friends to unlock bonus points!"
         )
 
-    await message.reply_text(text, parse_mode=parseMode.HTML)
+    await message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
 @bot.on_message(filters.command("referral"))
