@@ -50,7 +50,7 @@ PREMIUM_TIERS = {
 }
 
 REFERRAL_TIERS = {
-    5: ("silver", 10),
+    2: ("silver", 10),
     10: ("gold", 20),
     20: ("diamond", 50)
 }
@@ -477,7 +477,7 @@ async def premium_expiry_warning():
 # --- Referral Expiry Settings ---
 
 REFERRAL_EXPIRY_ENABLED = True  # Can be toggled via command
-REFERRAL_EXPIRY_DAYS = 30
+REFERRAL_EXPIRY_DAYS = 1
 
 def toggle_referral_expiry():
     global REFERRAL_EXPIRY_ENABLED
@@ -512,7 +512,7 @@ def check_and_downgrade_tier(user_id):
         new_tier = "Diamond"
     elif active_refs >= 10:
         new_tier = "Gold"
-    elif active_refs >= 5:
+    elif active_refs >= 2:
         new_tier = "Silver"
     
     db.users.update_one({"user_id": user_id}, {"$set": {"referral_tier": new_tier}})
