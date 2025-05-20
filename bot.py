@@ -552,30 +552,39 @@ async def reset_referrals(_, message: Message):
     await message.reply_text(f"♻️ Reset referrals for user <code>{uid}</code>.")
 
 @bot.on_message(filters.command("setreferrals") & filters.user(ADMINS))
-async def set_referrals(_, message: Message):
-    if len(message.command) != 3:
-        return await message.reply_text("Usage: <code>/setreferrals &lt;user_id&gt; &lt;count&gt;</code>")
-    
-    uid = int(message.command[1])
-    count = int(message.command[2])
+async def set_referrals(_, message):
+    parts = message.command
+    if len(parts) < 3:
+        return await message.reply_text("Usage: /setreferrals <user_id> <count> [days_ago]")
+
+    try:
+        uid = int(parts[1])
+        count = int(parts[2])
+        days_ago = int(parts[3]) if len(parts) == 4 else 0
+    except ValueError:
+        return await message.reply_text("Invalid input. Make sure user_id, count, and days_ago are integers.")
+
     now = datetime.datetime.utcnow()
-    
+    referral_time = now - datetime.timedelta(days=days_ago)
+
+    fake_refs = [
+        {"user_id": f"fake{i}", "timestamp": referral_time}
+        for i in range(count)
+    ]
+
     db.referrals.update_one(
         {"user_id": uid},
-        {
-            "$set": {
-                "referrals": [
-                    {"user_id": f"fake{i}", "timestamp": now} for i in range(count)
-                ]
-            }
-        },
+        {"$set": {"referrals": fake_refs}},
         upsert=True
     )
-    
+
     new_tier = check_and_downgrade_tier(uid)
+
     await message.reply_text(
-        f"✅ Set {count} referrals for user <code>{uid}</code>.\nTier set to <b>{new_tier}</b>."
-                )
+        f"Set {count} referrals for user `{uid}`.\n"
+        f"Referral timestamp: {referral_time.strftime('%Y-%m-%d')}.\n"
+        f"Tier set to: **{new_tier}**."
+    )
 
 
 if __name__ == "__main__":
