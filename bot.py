@@ -11,6 +11,7 @@ from pymongo import MongoClient
 from pyrogram.errors import UserNotParticipant, FloodWait
 from health_check import start_health_check
 from pyrogram.enums import ParseMode
+from pyrogram.types import Message
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
 AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "7200"))
 DEFAULT_POINTS = int(os.getenv("DEFAULT_POINTS", "5"))
 DEFAULT_RESET_TIME = int(os.getenv("DEFAULT_RESET_TIME", "18000"))
+ADMINS = int(os.getenv("ADMINS", "6860316927"))
 
 id_pattern = re.compile(r'^.\d+$')
 AUTH_CHANNEL = [int(ch) if id_pattern.search(ch) else ch for ch in os.getenv("AUTH_CHANNEL", "-1002490575006").split()]
@@ -472,7 +474,108 @@ async def premium_expiry_warning():
 
         await asyncio.sleep(300)  # Check every 5 minutes
       
--
+-# --- Referral Expiry Settings ---
+
+REFERRAL_EXPIRY_ENABLED = True  # Can be toggled via command
+REFERRAL_EXPIRY_DAYS = 30
+
+def toggle_referral_expiry():
+    global REFERRAL_EXPIRY_ENABLED
+    REFERRAL_EXPIRY_ENABLED = not REFERRAL_EXPIRY_ENABLED
+    return REFERRAL_EXPIRY_ENABLED
+
+def add_referral(user_id, referred_id):
+    now = datetime.datetime.utcnow()
+    db.referrals.update_one(
+        {"user_id": user_id},
+        {"$push": {"referrals": {"user_id": referred_id, "timestamp": now}}},
+        upsert=True
+    )
+
+def get_active_referrals(user_id):
+    data = db.referrals.find_one({"user_id": user_id})
+    if not data:
+        return []
+    if not REFERRAL_EXPIRY_ENABLED:
+        return data.get("referrals", [])
+    
+    now = datetime.datetime.utcnow()
+    return [
+        r for r in data.get("referrals", [])
+        if (now - r["timestamp"]).days < REFERRAL_EXPIRY_DAYS
+    ]
+
+def check_and_downgrade_tier(user_id):
+    active_refs = len(get_active_referrals(user_id))
+    new_tier = "None"
+    if active_refs >= 20:
+        new_tier = "Diamond"
+    elif active_refs >= 10:
+        new_tier = "Gold"
+    elif active_refs >= 5:
+        new_tier = "Silver"
+    
+    db.users.update_one({"user_id": user_id}, {"$set": {"referral_tier": new_tier}})
+    return new_tier
+
+# --- Scheduler Job (Daily) ---
+
+async def daily_referral_check():
+    async for user in db.users.find({}):
+        old_tier = user.get("referral_tier", "None")
+        new_tier = check_and_downgrade_tier(user["user_id"])
+        if new_tier != old_tier:
+            try:
+                await app.send_message(
+                    user["user_id"],
+                    f"⚠️ Your referral tier has been downgraded from {old_tier} to {new_tier} due to expired referrals."
+                )
+            except:
+                pass
+
+# --- Admin Commands ---
+
+@app.on_message(filters.command("togglereferralexpiry") & filters.user(ADMINS))
+async def toggle_expiry_handler(_, message: Message):
+    state = toggle_referral_expiry()
+    status = "enabled" if state else "disabled"
+    await message.reply_text(f"✅ Referral expiry is now {status}.")
+
+@app.on_message(filters.command("resetreferrals") & filters.user(ADMINS))
+async def reset_referrals(_, message: Message):
+    if len(message.command) != 2:
+        return await message.reply_text("Usage: <code>/resetreferrals &lt;user_id&gt;</code>")
+    
+    uid = int(message.command[1])
+    db.referrals.delete_one({"user_id": uid})
+    db.users.update_one({"user_id": uid}, {"$set": {"referral_tier": "None"}})
+    await message.reply_text(f"♻️ Reset referrals for user <code>{uid}</code>.")
+
+@app.on_message(filters.command("setreferrals") & filters.user(ADMINS))
+async def set_referrals(_, message: Message):
+    if len(message.command) != 3:
+        return await message.reply_text("Usage: <code>/setreferrals &lt;user_id&gt; &lt;count&gt;</code>")
+    
+    uid = int(message.command[1])
+    count = int(message.command[2])
+    now = datetime.datetime.utcnow()
+    
+    db.referrals.update_one(
+        {"user_id": uid},
+        {
+            "$set": {
+                "referrals": [
+                    {"user_id": f"fake{i}", "timestamp": now} for i in range(count)
+                ]
+            }
+        },
+        upsert=True
+    )
+    
+    new_tier = check_and_downgrade_tier(uid)
+    await message.reply_text(
+        f"✅ Set {count} referrals for user <code>{uid}</code>.\nTier set to <b>{new_tier}</b>."
+                )
 
 
 if __name__ == "__main__":
