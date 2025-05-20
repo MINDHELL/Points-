@@ -25,6 +25,7 @@ WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
 AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "7200"))
 DEFAULT_POINTS = int(os.getenv("DEFAULT_POINTS", "5"))
 DEFAULT_RESET_TIME = int(os.getenv("DEFAULT_RESET_TIME", "18000"))
+BOT_USERNAME = int(os.getenv("BOT_USERNAME", "RUNDUMBOT"))
 
 id_pattern = re.compile(r'^.\d+$')
 AUTH_CHANNEL = [int(ch) if id_pattern.search(ch) else ch for ch in os.getenv("AUTH_CHANNEL", "-1002490575006").split()]
