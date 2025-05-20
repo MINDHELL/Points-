@@ -69,7 +69,8 @@ def get_user(user_id):
             "referral_points": 0,
             "referrals": [],
             "premium_used": 0,
-            "premium": None
+            "premium": None,
+            "referral_expiry": None  # NEW: track referral tier expiry timestamp
         }
         users_collection.insert_one(user)
     return user
@@ -129,33 +130,84 @@ async def calculate_total_points(user):
     referral_points = user.get("referral_points", 0)
     premium = user.get("premium")
     premium_points = 0
-    if premium and time.time() < premium.get("expiry", 0):
+
+    # Check referral expiry toggle and expiry timestamp
+    settings = settings_collection.find_one({"_id": "points_settings"}) or {}
+    referral_expiry_enabled = settings.get("referral_expiry_enabled", False)
+    referral_expiry_duration = settings.get("referral_expiry_duration", 30 * 24 * 3600)  # default 30 days
+
+    now = time.time()
+    referral_expiry_time = user.get("referral_expiry")
+
+    if referral_expiry_enabled and referral_expiry_time:
+        if now > referral_expiry_time:
+            # Referral expired - zero referral points
+            referral_points = 0
+
+    if premium and now < premium.get("expiry", 0):
         tier = premium.get("tier")
         max_premium = PREMIUM_TIERS.get(tier, 0)
         used = user.get("premium_used", 0)
         premium_points = max_premium - used if used < max_premium else 0
         total += premium_points
+
     total += referral_points
     return total, referral_points, premium_points
-
 
 async def reset_points_if_needed(user):
     settings = settings_collection.find_one({"_id": "points_settings"}) or {}
     reset_interval = settings.get("reset_time", DEFAULT_RESET_TIME)
-    if time.time() > user.get("points_reset_time", 0):
+    referral_expiry_enabled = settings.get("referral_expiry_enabled", False)
+    referral_expiry_duration = settings.get("referral_expiry_duration", 30 * 24 * 3600)  # default 30 days
+
+    now = time.time()
+
+    if now > user.get("points_reset_time", 0):
         referral_points = 0
+        referral_tier_level = 0
         for r, (name, pts) in REFERRAL_TIERS.items():
             if len(user.get("referrals", [])) >= r:
                 referral_points = pts
-        update_fields = {
+                referral_tier_level = r
+
+        # Check if referral expiry is enabled and if referral tier expired
+        if referral_expiry_enabled:
+            referral_expiry_time = user.get("referral_expiry")
+            if referral_tier_level == 0 or (referral_expiry_time and now > referral_expiry_time):
+                # referral tier expired or no valid tier, reset referral_points and expiry
+                referral_points = 0
+                update_fields = {
+                    "referral_points": 0,
+                    "referral_expiry": None,
+                }
+            else:
+                # If tier valid and no expiry set, set referral_expiry to now + duration
+                if not user.get("referral_expiry"):
+                    update_fields = {
+                        "referral_expiry": now + referral_expiry_duration,
+                        "referral_points": referral_points,
+                    }
+                else:
+                    update_fields = {
+                        "referral_points": referral_points,
+                    }
+        else:
+            # expiry not enabled, just update referral_points
+            update_fields = {
+                "referral_points": referral_points,
+            }
+
+        update_fields.update({
             "points": DEFAULT_POINTS,
-            "points_reset_time": time.time() + reset_interval,
-            "referral_points": referral_points
-        }
-        if user.get("premium") and time.time() < user["premium"].get("expiry", 0):
+            "points_reset_time": now + reset_interval,
+        })
+
+        if user.get("premium") and now < user["premium"].get("expiry", 0):
             update_fields["premium_used"] = 0
+
         users_collection.update_one({"id": user["id"]}, {"$set": update_fields})
         user = get_user(user["id"])
+
     return user
 
 
@@ -215,13 +267,35 @@ async def check_points(client, message):
     points, ref, prem = await calculate_total_points(user)
     reset_time = datetime.datetime.fromtimestamp(user["points_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
     time_left = int(user["points_reset_time"] - time.time())
-    await message.reply_text(
+
+    text = (
         f"⭐ Points: {user.get('points', 0)}\n"
         f"🤝 Referral Points: {ref}\n"
         f"💎 Premium Bonus Left: {prem}\n"
         f"⏳ Next Reset In: {str(datetime.timedelta(seconds=time_left))}\n"
         f"🕒 Reset At: {reset_time}"
     )
+
+    # Show referral tier info and expiry
+    referrals = user.get("referrals", [])
+    tier_name = None
+    for r, (name, pts) in sorted(REFERRAL_TIERS.items(), reverse=True):
+        if len(referrals) >= r:
+            tier_name = name.title()
+            break
+
+    if tier_name:
+        text += f"\n🏅 Referral Tier: {tier_name}"
+
+    expiry = user.get("referral_tier_expiry")
+    if expiry:
+        left = int(expiry - time.time())
+        if left > 0:
+            text += f"\n⌛ Tier Expires In: {str(datetime.timedelta(seconds=left))}"
+        else:
+            text += f"\n❌ Referral Tier Expired"
+
+    await message.reply_text(text)
 
 
 @bot.on_message(filters.command("addpremium") & filters.user(OWNER_ID))
@@ -270,16 +344,32 @@ async def my_plans(client, message):
     referral_count = len(referrals)
     referral_tier = "None"
     referral_bonus = 0
+    expiry_text = ""
+
     for count, (tier, bonus) in sorted(REFERRAL_TIERS.items()):
         if referral_count >= count:
             referral_tier = tier.capitalize()
             referral_bonus = bonus
 
+    expiry = user.get("referral_tier_expiry")
+    if referral_tier != "None":
+        if expiry:
+            remaining = int(expiry - time.time())
+            if remaining > 0:
+                expiry_text = f"\n⌛ <b>Tier Expires In:</b> {str(datetime.timedelta(seconds=remaining))}"
+            else:
+                expiry_text = f"\n❌ <b>Referral Tier Expired</b>"
+    else:
+        expiry_text = ""
+
     text += "\n👥 <b>Referral Info</b>\n"
     if referral_count > 0:
-        text += f"🥇 <b>Referral Tier:</b> {referral_tier}\n"
-        text += f"👤 <b>Referrals:</b> {referral_count}\n"
-        text += f"🎁 <b>Bonus:</b> +{referral_bonus} / reset"
+        text += (
+            f"🥇 <b>Referral Tier:</b> {referral_tier}\n"
+            f"👤 <b>Referrals:</b> {referral_count}\n"
+            f"🎁 <b>Bonus:</b> +{referral_bonus} / reset"
+            f"{expiry_text}"
+        )
     else:
         text += (
             "📭 <i>You haven't referred anyone yet.</i>\n"
@@ -345,18 +435,27 @@ async def my_referrals(client, message):
     referrals = user.get("referrals", [])
     count = len(referrals)
     tier_name = "None"
+    expiry_note = ""
 
     for threshold, (name, _) in sorted(REFERRAL_TIERS.items(), reverse=True):
         if count >= threshold:
             tier_name = name.capitalize()
             break
 
+    expiry = user.get("referral_tier_expiry")
+    if tier_name != "None" and expiry:
+        remaining = int(expiry - time.time())
+        if remaining > 0:
+            expiry_note = f"\n⏳ Tier expires in: **{str(datetime.timedelta(seconds=remaining))}**"
+        else:
+            expiry_note = f"\n❌ Your referral tier has expired."
+
     await message.reply_text(
         f"🤝 You have referred **{count}** user(s).\n"
-        f"🏅 Your current referral tier: **{tier_name}**\n\n"
+        f"🏅 Your current referral tier: **{tier_name}**"
+        f"{expiry_note}\n\n"
         "🔗 Share your referral link using /referral"
     )
-
 
 @bot.on_message(filters.command("premiumusers") & filters.user(OWNER_ID))
 async def list_premium_users(client, message):
