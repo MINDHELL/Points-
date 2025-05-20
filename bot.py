@@ -535,13 +535,13 @@ async def daily_referral_check():
 
 # --- Admin Commands ---
 
-@app.on_message(filters.command("togglereferralexpiry") & filters.user(ADMINS))
+@bot.on_message(filters.command("togglereferralexpiry") & filters.user(ADMINS))
 async def toggle_expiry_handler(_, message: Message):
     state = toggle_referral_expiry()
     status = "enabled" if state else "disabled"
     await message.reply_text(f"✅ Referral expiry is now {status}.")
 
-@app.on_message(filters.command("resetreferrals") & filters.user(ADMINS))
+@bot.on_message(filters.command("resetreferrals") & filters.user(ADMINS))
 async def reset_referrals(_, message: Message):
     if len(message.command) != 2:
         return await message.reply_text("Usage: <code>/resetreferrals &lt;user_id&gt;</code>")
@@ -551,7 +551,7 @@ async def reset_referrals(_, message: Message):
     db.users.update_one({"user_id": uid}, {"$set": {"referral_tier": "None"}})
     await message.reply_text(f"♻️ Reset referrals for user <code>{uid}</code>.")
 
-@app.on_message(filters.command("setreferrals") & filters.user(ADMINS))
+@bot.on_message(filters.command("setreferrals") & filters.user(ADMINS))
 async def set_referrals(_, message: Message):
     if len(message.command) != 3:
         return await message.reply_text("Usage: <code>/setreferrals &lt;user_id&gt; &lt;count&gt;</code>")
