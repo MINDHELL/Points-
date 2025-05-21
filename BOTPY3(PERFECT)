@@ -407,7 +407,75 @@ async def total_files(client, message):
     total_files = collection.count_documents({})
     await message.reply_text(f"📂 Total Indexed Files: {total_files}")
 
+#🔥premium expiry notification. 
+async def premium_expiry_warning():
+    warned_users = {}  # Track who has been warned
+
+    while True:
+        now = time.time()
+        users = users_collection.find({"premium": {"$ne": None}})
+        
+        for user in users:
+            user_id = user["id"]
+            premium = user.get("premium", {})
+            tier = premium.get("tier", "").capitalize()
+            expiry = premium.get("expiry", 0)
+            remaining = expiry - now
+
+            if remaining <= 0:
+                # Already expired
+                if warned_users.get(user_id) != "expired":
+                    try:
+                        await bot.send_message(
+                            user_id,
+                            f"❌ Your <b>{tier}</b> premium plan has <b>expired</b>.\n"
+                            "You have been moved back to the free plan.\n\n"
+                            "Renew now to get back your bonus points!",
+                            reply_markup=InlineKeyboardMarkup(
+                                [[InlineKeyboardButton("💎 Contact Admin", url="https://t.me/cosmos6t")]]
+                            )
+                        )
+                        warned_users[user_id] = "expired"
+                    except Exception as e:
+                        logging.warning(f"Failed to send expiry message to {user_id}: {e}")
+                continue
+
+            if 3540 <= remaining <= 3660 and warned_users.get(user_id) != "1h":
+                # ~1 hour left
+                try:
+                    await bot.send_message(
+                        user_id,
+                        f"⚠️ Your <b>{tier}</b> premium plan will expire in <b>1 hour</b>.\n\n"
+                        "Renew now to continue enjoying bonus points!",
+                        reply_markup=InlineKeyboardMarkup(
+                            [[InlineKeyboardButton("💎 Contact Admin", url="https://t.me/cosmos6t")]]
+                        )
+                    )
+                    warned_users[user_id] = "1h"
+                except Exception as e:
+                    logging.warning(f"Failed to send 1h warning to {user_id}: {e}")
+
+            elif 540 <= remaining <= 660 and warned_users.get(user_id) != "10m":
+                # ~10 minutes left
+                try:
+                    await bot.send_message(
+                        user_id,
+                        f"⏳ Your <b>{tier}</b> premium plan will expire in <b>10 minutes</b>!\n\n"
+                        "Don't miss out—renew now to keep enjoying your benefits.",
+                        reply_markup=InlineKeyboardMarkup(
+                            [[InlineKeyboardButton("💎 Contact Admin", url="https://t.me/cosmos6t")]]
+                        )
+                    )
+                    warned_users[user_id] = "10m"
+                except Exception as e:
+                    logging.warning(f"Failed to send 10m warning to {user_id}: {e}")
+
+        await asyncio.sleep(300)  # Check every 5 minutes
+
 
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
+    loop = asyncio.get_event_loop()
+    loop.create_task(premium_expiry_warning())
     bot.run()
+
