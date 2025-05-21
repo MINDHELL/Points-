@@ -287,7 +287,7 @@ async def check_points(client, message):
     if tier_name:
         text += f"\n🏅 Referral Tier: {tier_name}"
 
-    expiry = user.get("referral_tier_expiry")
+    expiry = user.get("referral_expiry")
     if expiry:
         left = int(expiry - time.time())
         if left > 0:
@@ -351,7 +351,7 @@ async def my_plans(client, message):
             referral_tier = tier.capitalize()
             referral_bonus = bonus
 
-    expiry = user.get("referral_tier_expiry")
+    expiry = user.get("referral_expiry")
     if referral_tier != "None":
         if expiry:
             remaining = int(expiry - time.time())
@@ -442,7 +442,7 @@ async def my_referrals(client, message):
             tier_name = name.capitalize()
             break
 
-    expiry = user.get("referral_tier_expiry")
+    expiry = user.get("referral_expiry")
     if tier_name != "None" and expiry:
         remaining = int(expiry - time.time())
         if remaining > 0:
