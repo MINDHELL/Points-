@@ -50,7 +50,7 @@ PREMIUM_TIERS = {
 }
 
 REFERRAL_TIERS = {
-    5: ("silver", 10),
+    2: ("silver", 10),
     10: ("gold", 20),
     20: ("diamond", 50)
 }
@@ -611,7 +611,7 @@ def check_and_downgrade_tier(user_id):
         new_tier = "Diamond"
     elif active_refs >= 10:
         new_tier = "Gold"
-    elif active_refs >= 5:
+    elif active_refs >= 2:
         new_tier = "Silver"
     
     db.users.update_one({"user_id": user_id}, {"$set": {"referral_tier": new_tier}})
